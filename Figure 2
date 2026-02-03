@@ -1,0 +1,58 @@
+# Figure 2. Temporal PBMC analysis
+
+
+
+#Figure 2 PBMC processing
+
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(stringr)
+library(Seurat)
+library(dplyr)
+library(Seurat)
+library(SingleCellExperiment)
+library(scDblFinder)
+library(dplyr)
+
+PBMC <- readRDS("/work/users/k/y/kyutae/final4_PBMC.rds")
+PBMC <- JoinLayers(PBMC)
+PBMC[['percent.mt']] <- PercentageFeatureSet(PBMC, pattern = '^MT-')
+DefaultAssay(PBMC) <- "RNA"  
+sce <- scDblFinder(LayerData(PBMC, assay = "RNA", layer = "counts"),  samples= PBMC@meta.data$orig.ident)
+PBMC$scDblFinder.score <- sce$scDblFinder.score
+PBMC$scDblFinder.class <- sce$scDblFinder.class 
+VlnPlot(PBMC,c("nFeature_RNA",'percent.mt','scDblFinder.score'),pt.size = 0)
+
+PBMC <- subset(PBMC,subset = nFeature_RNA > 300 &
+                 nFeature_RNA < 6000 &
+                 percent.mt < 10  & 
+                 scDblFinder.class == 'singlet')
+VlnPlot(PBMC,c("nFeature_RNA",'percent.mt','scDblFinder.score'),pt.size = 0)
+
+PBMC.list <- SplitObject(PBMC, split.by = "orig.ident")
+PBMC.list <- lapply(PBMC.list, NormalizeData)
+PBMC.list <- lapply(PBMC.list, FindVariableFeatures, selection.method = "vst", nfeatures = 2000)
+features <- SelectIntegrationFeatures(PBMC.list, nfeatures = 3000)  
+anchors <- FindIntegrationAnchors(
+  object.list = PBMC.list, 
+  anchor.features = features, 
+  reduction = "cca",  
+  dims = 1:15
+)
+PBMC <- IntegrateData(anchorset = anchors, dims = 1:15)
+PBMC <- ScaleData(PBMC)
+PBMC <- RunPCA(PBMC, npcs = 50)
+ElbowPlot(PBMC,ndims = 50)
+PBMC <- FindNeighbors(PBMC, dims = 1:15, graph.name = 'mygraph')
+PBMC <- FindClusters(PBMC, resolution = 1.2, graph.name = 'mygraph',random.seed = 42)
+PBMC <- RunUMAP(PBMC, dims = 1:15,dim = 1:15,seed.use = 42)
+saveRDS(PBMC,"/work/users/k/y/kyutae/IO_PBMC_splited.rds")
+PBMC <- JoinLayers(PBMC)
+
+
+
+
+
+
+
