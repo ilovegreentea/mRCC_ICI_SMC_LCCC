@@ -539,6 +539,7 @@ EnhancedVolcano(C15_DE,x = 'avg_log2FC',y = 'p_val_adj',lab = rownames(C15_DE),p
 
 
 
+#CD8 functional heatmap
 
 library(Seurat)
 library(dplyr)
@@ -548,117 +549,69 @@ library(ComplexHeatmap)
 library(circlize)
 library(grid)
 library(rlang)
-
-PBMC_T <- AddModuleScore(
-  PBMC_T,
-  features = as.list(T_cell), #T cell atlas signature
-  name     = names(T_cell)  
-)
-
-meta0 <- PBMC_T@meta.data
-
-## =========================
-## 1) 메타데이터 정리
-## =========================
+T_cell_sig <- read_excel("T cell.xlsx")
+#T cell atlas CD8 functional signature
+#Chu, Y., Dai, E., Li, Y., Han, G., Pei, G., Ingram, D. R., ... & Wang, L. (2023). Pan-cancer T cell atlas links a cellular stress response state to immunotherapy resistance. Nature medicine, 29(6), 1550-1562.
+PBMC_T <- AddModuleScore(PBMC_T,features = as.list(T_cell_sig),name = names(T_cell_sig))
 
 df <- meta0 %>%
   mutate(
-    # T_R: 예) "T0_Responder", "T1_PD_at_T4" 이런 형식이라고 가정
-    TimePoint = sub("_.*", "", T_R),      # "T0","T1","T2","T3",...
-    subtype   = as.character(Merged),
-    
-    # 🔴 ResponseGroup: Responder vs Non_Responder만 사용, PD_at_T4는 제외
-    ResponseGroup = case_when(
-      Response == "Responder"      ~ "Responder",
-      Response == "Non_Responder"  ~ "Non_Responder",
-      TRUE                         ~ NA_character_       # PD_at_T4 포함해서 NA 처리
-    )
+    TimePoint     = sub("_.*", "", T_R),
+    ResponseGroup = if_else(grepl("Non_Responder", T_R), "Non_Responder", "Responder"),
+    T_NK_cell        = as.character(T_NK_cell)
   ) %>%
-  # T0, T1, T2만 사용 (필요하면 T3 추가 가능)
-  filter(TimePoint %in% c("T0", "T1", "T2")) %>%
-  # CD8 / Tgd subset만 보고 싶으면 (원래 코드 그대로)
-  filter(grepl("CD8|Tgd", subtype)) %>%
-  # PD_at_T4 등 ResponseGroup이 NA인 애들은 비교에서 제외
-  filter(!is.na(ResponseGroup))
+  filter(
+    TimePoint %in% c("T0","T1","T2"),
+    grepl("CD8", T_NK_cell)
+  )
 
-# 🔴 시그니처 컬럼: meta에서 위치로 가져온 뒤, 실제 있는 것만 사용
-sig_cols <- colnames(meta0)[39:57]
-sig_cols <- sig_cols[sig_cols %in% colnames(df)]
-if (length(sig_cols) == 0) {
-  stop("sig_cols 범위(39:57)에 시그니처 컬럼이 없습니다. 위치를 다시 확인하세요.")
-}
+sig_cols  <- colnames(meta0)[c(39:57)]
+subtypes  <- sort(unique(df$T_NK_cell))
+timepoints <- c("T0","T1","T2")
 
-## =========================
-## 2) 한 feature × timepoint × subtype의 log2FC 계산 함수
-## =========================
-
-calc_log2fc_one <- function(dat, feature, tp, subtype) {
+calc_meandiff_one <- function(dat, feature, tp, subtype) {
+  
   sub_df <- dat %>%
-    filter(TimePoint == tp, subtype == !!subtype) %>%
+    filter(TimePoint == tp, T_NK_cell == subtype) %>%
     mutate(val = .data[[feature]]) %>%
     select(ResponseGroup, val) %>%
     filter(!is.na(val), !is.na(ResponseGroup))
   
-  # 해당 조건에 셀 없거나, 그룹이 하나 뿐이면 NA
-  if (nrow(sub_df) == 0 || dplyr::n_distinct(sub_df$ResponseGroup) < 2) {
-    return(tibble::tibble(
+  # 데이터 부족할 때
+  if (nrow(sub_df) == 0 || n_distinct(sub_df$ResponseGroup) < 2) {
+    return(tibble(
       feature   = feature,
       timepoint = tp,
       subtype   = subtype,
-      log2FC    = NA_real_,
+      mean_diff = NA_real_,
       p         = NA_real_
     ))
   }
   
-  # 🔑 음수/0 방지: PBMC_T 코드에서처럼 shift + eps
-  eps   <- 1e-6
-  shift <- -min(sub_df$val, na.rm = TRUE)
-  sub_df <- mutate(sub_df, val_pos = val + shift + eps)
+  mean_resp <- mean(sub_df$val[sub_df$ResponseGroup == "Responder"])
+  mean_non  <- mean(sub_df$val[sub_df$ResponseGroup == "Non_Responder"])
   
-  mean_resp <- mean(sub_df$val_pos[sub_df$ResponseGroup == "Responder"],     na.rm = TRUE)
-  mean_non  <- mean(sub_df$val_pos[sub_df$ResponseGroup == "Non_Responder"], na.rm = TRUE)
-  
-  log2fc <- log2(mean_resp / mean_non)
+  mean_diff <- mean_resp - mean_non   
   
   pval <- tryCatch(
-    stats::wilcox.test(val ~ ResponseGroup, data = sub_df)$p.value,
+    wilcox.test(val ~ ResponseGroup, data = sub_df)$p.value,
     error = function(e) NA_real_
   )
   
-  tibble::tibble(
+  tibble(
     feature   = feature,
     timepoint = tp,
     subtype   = subtype,
-    log2FC    = log2fc,
+    mean_diff = mean_diff,
     p         = pval
   )
 }
 
-## =========================
-## 3) 전체 feature × timepoint × subtype에 대해 계산
-## =========================
-
-subtypes   <- sort(unique(df$subtype))
-timepoints <- c("T0", "T1", "T2")
-
-res_all <- purrr::map_dfr(sig_cols, function(feat) {
-  purrr::map_dfr(timepoints, function(tp) {
-    purrr::map_dfr(subtypes, ~ calc_log2fc_one(df, feat, tp, .x))
+res_all <- map_dfr(sig_cols, function(feat) {
+  map_dfr(timepoints, function(tp) {
+    map_dfr(subtypes, ~ calc_meandiff_one(df, feat, tp, .x))
   })
 })
-
-res_all <- as_tibble(res_all)
-
-if (is.list(res_all$p)) {
-  res_all$p <- sapply(res_all$p, function(x) {
-    # x가 numeric(1) 이거나 길이 1짜리 리스트라고 가정
-    if (length(x) == 0 || all(is.na(x))) {
-      return(NA_real_)
-    } else {
-      return(as.numeric(x)[1])
-    }
-  })
-}
 
 res_all <- res_all %>%
   mutate(
@@ -671,76 +624,240 @@ res_all <- res_all %>%
       p_adj < 0.05 ~ "*",
       TRUE ~ ""
     ),
-    col_key = paste0(timepoint, "_", subtype)   # 예: "T0_CD8_EFF"
+    col_key = paste0(timepoint, "_", subtype)
   )
+
 col_order <- c(
   grep("^T0_", unique(res_all$col_key), value = TRUE),
   grep("^T1_", unique(res_all$col_key), value = TRUE),
   grep("^T2_", unique(res_all$col_key), value = TRUE)
 )
 
-log2fc_mat <- res_all %>%
-  select(feature, col_key, log2FC) %>%
+mean_diff_mat <- res_all %>%
+  select(feature, col_key, mean_diff) %>%
   distinct(feature, col_key, .keep_all = TRUE) %>%
-  pivot_wider(names_from = col_key, values_from = log2FC) %>%
-  tibble::column_to_rownames("feature") %>%
+  pivot_wider(names_from = col_key, values_from = mean_diff) %>%
+  column_to_rownames("feature") %>%
   as.matrix()
 
 star_mat <- res_all %>%
   select(feature, col_key, signif) %>%
   distinct(feature, col_key, .keep_all = TRUE) %>%
   pivot_wider(names_from = col_key, values_from = signif) %>%
-  tibble::column_to_rownames("feature") %>%
+  column_to_rownames("feature") %>%
   as.matrix()
 
-col_order <- intersect(col_order, colnames(log2fc_mat))
-log2fc_mat <- log2fc_mat[, col_order, drop = FALSE]
-star_mat   <- star_mat[,   col_order, drop = FALSE]
+col_order <- intersect(col_order, colnames(mean_diff_mat))
+mean_diff_mat <- mean_diff_mat[, col_order, drop = FALSE]
+star_mat      <- star_mat[, col_order, drop = FALSE]
 
-## =========================
-## 5) Heatmap (Timepoint로 column split)
-## =========================
+col_fun <- colorRamp2(c(-0.5, 0, 0.5),
+                      c("#2166ac", "white", "#b2182b"))
 
-tp_levels <- c("T0", "T1", "T2")
-col_tp <- factor(sub("_.*", "", colnames(log2fc_mat)), levels = tp_levels)
+tp_levels <- c("T0","T1","T2")
+col_tp <- factor(sub("_.*","",colnames(mean_diff_mat)), levels = tp_levels)
 
-col_fun <- circlize::colorRamp2(
-  c(-1.5, 0, 1.5),
-  c("#2166ac", "white", "#b2182b")
-)
-
-grid::grid.newpage()
-ht <- ComplexHeatmap::Heatmap(
-  log2fc_mat,
-  name = "log2FC\n(Resp / NonResp)",
-  col  = col_fun,
-  cluster_rows    = FALSE,
+grid.newpage()
+ht <- Heatmap(
+  mean_diff_mat,
+  name  = "Δmean (R-NR)",
+  col   = col_fun,
+  cluster_rows = FALSE,
   cluster_columns = FALSE,
-  column_split    = col_tp,             
-  gap             = unit(5, "mm"),
-  column_title    = "Signature log2FC by timepoint & CD8/Tgd subtypes",
-  column_title_gp = grid::gpar(fontsize = 13, fontface = "bold"),
+  column_split = col_tp,
+  gap = unit(5, "mm"),
+  column_title = "Signature mean difference (Responder - Non_Responder)",
+  column_title_gp = gpar(fontsize = 13, fontface = "bold"),
   column_names_rot = 45,
-  row_names_gp     = grid::gpar(fontsize = 11),
   heatmap_legend_param = list(
-    title_gp = grid::gpar(fontface = "bold"),
-    at = c(-1.5, -1, -0.5, 0, 0.5, 1, 1.5)
+    title_gp = gpar(fontface = "bold"),
+    at = c(-0.5, 0, 0.5)
   ),
   cell_fun = function(j, i, x, y, w, h, fill) {
     lab <- star_mat[i, j]
     if (!is.na(lab) && nzchar(lab)) {
-      grid::grid.text(lab, x, y, gp = grid::gpar(fontsize = 10, fontface = "bold"))
+      grid.text(lab, x, y, gp = gpar(fontsize = 10, fontface = "bold"))
     }
   },
   border = TRUE
 )
+draw(ht)
 
-ComplexHeatmap::draw(ht, heatmap_legend_side = "right", annotation_legend_side = "bottom")
+#Lineplot Dynamic change across timepoints
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+PBMC_CD8 <- subset(PBMC_T, Merged %in% c("CD8_EFF","CD8_pEx","CD8_Temra","CD8_MAIT","CD8_Naive"))
+
+PBMC_CD8 <-
+  AddModuleScore(
+    object = PBMC_CD8,
+    features = hallmark_list,
+    name = names(hallmark_list),
+    assay = 'RNA') 
+
+## 1) 시그니처들
+sig_cols <- c(
+  "IFN Response14",
+  "MAPK Signaling12",
+  "NFKB Signaling10"
+)
+
+## 2) cell type 지정
+cell_types <- c("CD8_EFF", "CD8_MAIT", "CD8_Temra", "CD8_Naive", "CD8_pEx")
+
+## 3) 셀 레벨 데이터 (이미 하시던 그대로)
+sig_df <- PBMC_CD8@meta.data %>%
+  filter(
+    T_NK_cell %in% cell_types,
+    Timepoint != "T3"
+  ) %>%
+  mutate(
+    TimePoint = sub("_.*", "", T_R)
+  ) %>%
+  filter(TimePoint %in% c("T0", "T1", "T2")) %>%
+  select(T_NK_cell, Response, TimePoint, all_of(sig_cols)) %>%
+  pivot_longer(
+    cols      = all_of(sig_cols),
+    names_to  = "Signature",
+    values_to = "value"
+  ) %>%
+  drop_na(value)
+
+sig_df$TimePoint <- factor(sig_df$TimePoint, levels = c("T0", "T1", "T2"))
+
+## 4) mean / sd / n → mean difference + 95% CI
+summary_ci <- sig_df %>%
+  group_by(Signature, T_NK_cell, TimePoint, Response) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    sd   = sd(value, na.rm = TRUE),
+    n    = dplyr::n(),
+    .groups = "drop"
+  ) %>%
+  # Responder / Non_Responder를 wide로
+  pivot_wider(
+    names_from  = Response,
+    values_from = c(mean, sd, n)
+  ) %>%
+  # mean diff & SE & 95% CI
+  mutate(
+    mean_diff_R_NR = mean_Responder - mean_Non_Responder,
+    se_diff = sqrt(
+      (sd_Responder^2 / n_Responder) +
+        (sd_Non_Responder^2 / n_Non_Responder)
+    ),
+    ci_low  = mean_diff_R_NR - 1.96 * se_diff,
+    ci_high = mean_diff_R_NR + 1.96 * se_diff
+  )
+ggplot(summary_ci,
+       aes(x = TimePoint, y = mean_diff_R_NR,
+           group = T_NK_cell, color = T_NK_cell)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.15,
+    linewidth = 0.4
+  ) +
+  facet_wrap(~ Signature, scales = "free_y") +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Signature mean difference (Responder − Non_Responder) with 95% CI",
+    x     = "TimePoint",
+    y     = "Δmean (Responder − Non_Responder)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
 
 
 
+p_stats <- sig_df %>%
+  group_by(Signature, T_NK_cell, TimePoint) %>%
+  summarise(
+    p = tryCatch(
+      wilcox.test(value ~ Response)$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_adj = p.adjust(p, method = "BH"),
+    label = case_when(
+      is.na(p_adj) ~ "",
+      p_adj < 1e-4 ~ "****",
+      p_adj < 1e-3 ~ "***",
+      p_adj < 1e-2 ~ "**",
+      p_adj < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  )
 
+annot_df <- summary_ci %>%
+  left_join(p_stats, by = c("Signature", "T_NK_cell", "TimePoint")) %>%
+  filter(label != "")
+ggplot(summary_ci,
+       aes(x = TimePoint, y = mean_diff_R_NR,
+           group = T_NK_cell, color = T_NK_cell)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.15,
+    linewidth = 0.4
+  ) +
+  geom_text(
+    data = annot_df,
+    aes(label = label),
+    vjust = -1.0,
+    size  = 3,
+    show.legend = FALSE
+  ) +
+  facet_wrap(~ Signature, scales = "free_y") +
+  scale_color_brewer(palette = "Set3") +
+  labs(
+    title = "Signature mean difference (R − NR) with 95% CI and adj.p",
+    x     = "TimePoint",
+    y     = "Δmean (Responder − Non_Responder)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
 
+dodge <- position_dodge(width = 0.4)
+set3_colors <- c(
+  CD8_EFF   = "#FDB462",
+  CD8_MAIT  = "#B3DE69",
+  CD8_Temra = "#BC80BD",
+  CD8_Naive = "#FCCDE5",
+  CD8_pEx   = "#D9D9D9"
+)
+
+p1 <- ggplot(summary_ci,
+       aes(x = TimePoint, y = mean_diff_R_NR,
+           group = T_NK_cell, color = T_NK_cell)) +
+  geom_line(position = dodge, size = 1) +
+  geom_point(position = dodge, size = 2) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = dodge,
+    width = 0.15,
+    linewidth = 0.4
+  ) +
+  facet_wrap(~ Signature, scales = "free_y") +
+  scale_color_manual(values = set3_colors) +
+  labs(
+    title = "Signature mean difference (R − NR) with 95% CI",
+    x     = "TimePoint",
+    y     = "Δmean (Responder − Non_Responder)"
+  ) +
+  theme_bw(base_size = 11) 
+p1/p2/p3
 
 
 
