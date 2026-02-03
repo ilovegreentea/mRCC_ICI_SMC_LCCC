@@ -696,17 +696,14 @@ PBMC_CD8 <-
     name = names(hallmark_list),
     assay = 'RNA') 
 
-## 1) 시그니처들
 sig_cols <- c(
   "IFN Response14",
   "MAPK Signaling12",
   "NFKB Signaling10"
 )
 
-## 2) cell type 지정
 cell_types <- c("CD8_EFF", "CD8_MAIT", "CD8_Temra", "CD8_Naive", "CD8_pEx")
 
-## 3) 셀 레벨 데이터 (이미 하시던 그대로)
 sig_df <- PBMC_CD8@meta.data %>%
   filter(
     T_NK_cell %in% cell_types,
@@ -859,7 +856,332 @@ p1 <- ggplot(summary_ci,
   theme_bw(base_size = 11) 
 p1/p2/p3
 
+library(dplyr)
+library(tidyr)
+library(ggplot2)
 
+# 1) 시그니처들
+sig_cols <- c(
+  "Pro-apoptosis18",
+  "Senescence8"
+)
+PBMC_CD8@meta.data %>% colnames()
+# 2) cell type 지정
+cell_types <- c("CD8_EFF", "CD8_MAIT", "CD8_Temra", "CD8_Naive", "CD8_pEx")
+
+# 3) 셀 레벨 데이터 (Response 제거, T0~T3 모두 사용)
+sig_df <- PBMC_CD8@meta.data %>%
+  filter(T_NK_cell %in% cell_types) %>%
+  mutate(TimePoint = sub("_.*", "", T_R)) %>%      # 기존 로직 유지
+  filter(TimePoint %in% c("T0", "T1", "T2", "T3")) %>%
+  select(T_NK_cell, TimePoint, all_of(sig_cols)) %>%
+  pivot_longer(
+    cols = all_of(sig_cols),
+    names_to = "Signature",
+    values_to = "value"
+  ) %>%
+  drop_na(value)
+
+sig_df$TimePoint <- factor(sig_df$TimePoint, levels = c("T0", "T1", "T2", "T3"))
+
+summary_tp <- sig_df %>%
+  group_by(Signature, T_NK_cell, TimePoint) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    n = dplyr::n(),
+    se = sd / sqrt(n),
+    ci_low = mean - 1.96 * se,
+    ci_high = mean + 1.96 * se,
+    .groups = "drop"
+  )
+
+set3_colors <- c(
+  CD8_EFF = "#FDB462",
+  CD8_MAIT = "#B3DE69",
+  CD8_Temra = "#BC80BD",
+  CD8_Naive = "#FCCDE5",
+  CD8_pEx = "#D9D9D9"
+)
+
+p_mean <- ggplot(summary_tp, aes(x = TimePoint, y = mean, group = T_NK_cell, color = T_NK_cell)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.15, linewidth = 0.4) +
+  facet_wrap(~Signature, scales = "free_y") +
+  scale_color_manual(values = set3_colors) +
+  labs(
+    title = "Signature mean by TimePoint (95% CI)",
+    x = "TimePoint",
+    y = "Mean module score"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+p_mean
+
+baseline_df <- summary_tp %>%
+  select(Signature, T_NK_cell, TimePoint, mean, sd, n) %>%
+  pivot_wider(names_from = TimePoint, values_from = c(mean, sd, n)) %>%
+  mutate(
+    d_T1_T0 = mean_T1 - mean_T0,
+    se_T1_T0 = sqrt((sd_T1^2 / n_T1) + (sd_T0^2 / n_T0)),
+    lo_T1_T0 = d_T1_T0 - 1.96 * se_T1_T0,
+    hi_T1_T0 = d_T1_T0 + 1.96 * se_T1_T0,
+    
+    d_T2_T0 = mean_T2 - mean_T0,
+    se_T2_T0 = sqrt((sd_T2^2 / n_T2) + (sd_T0^2 / n_T0)),
+    lo_T2_T0 = d_T2_T0 - 1.96 * se_T2_T0,
+    hi_T2_T0 = d_T2_T0 + 1.96 * se_T2_T0,
+    
+    d_T3_T0 = mean_T3 - mean_T0,
+    se_T3_T0 = sqrt((sd_T3^2 / n_T3) + (sd_T0^2 / n_T0)),
+    lo_T3_T0 = d_T3_T0 - 1.96 * se_T3_T0,
+    hi_T3_T0 = d_T3_T0 + 1.96 * se_T3_T0
+  ) %>%
+  select(Signature, T_NK_cell, starts_with("d_"), starts_with("lo_"), starts_with("hi_")) %>%
+  pivot_longer(
+    cols = starts_with("d_"),
+    names_to = "Contrast",
+    values_to = "diff"
+  ) %>%
+  mutate(
+    TimePoint = recode(
+      Contrast,
+      d_T1_T0 = "T1-T0",
+      d_T2_T0 = "T2-T0",
+      d_T3_T0 = "T3-T0"
+    ),
+    ci_low = case_when(
+      Contrast == "d_T1_T0" ~ lo_T1_T0,
+      Contrast == "d_T2_T0" ~ lo_T2_T0,
+      Contrast == "d_T3_T0" ~ lo_T3_T0
+    ),
+    ci_high = case_when(
+      Contrast == "d_T1_T0" ~ hi_T1_T0,
+      Contrast == "d_T2_T0" ~ hi_T2_T0,
+      Contrast == "d_T3_T0" ~ hi_T3_T0
+    )
+  ) %>%
+  select(Signature, T_NK_cell, TimePoint, diff, ci_low, ci_high)
+
+baseline_df$TimePoint <- factor(baseline_df$TimePoint, levels = c("T1-T0", "T2-T0", "T3-T0"))
+
+p_base <- ggplot(baseline_df, aes(x = TimePoint, y = diff, group = T_NK_cell, color = T_NK_cell)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.15, linewidth = 0.4) +
+  facet_wrap(~Signature, scales = "free_y") +
+  scale_color_manual(values = set3_colors) +
+  labs(
+    title = "Baseline contrasts (T1-T0, T2-T0, T3-T0) with 95% CI",
+    x = "Contrast",
+    y = "Δmean (vs T0)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+p_base
+
+consec_df <- summary_tp %>%
+  arrange(Signature, T_NK_cell, TimePoint) %>%
+  group_by(Signature, T_NK_cell) %>%
+  mutate(
+    mean_prev = lag(mean),
+    sd_prev = lag(sd),
+    n_prev = lag(n),
+    diff = mean - mean_prev,
+    se = sqrt((sd^2 / n) + (sd_prev^2 / n_prev)),
+    ci_low = diff - 1.96 * se,
+    ci_high = diff + 1.96 * se,
+    Contrast = paste0(TimePoint, "-", lag(TimePoint))
+  ) %>%
+  ungroup() %>%
+  filter(Contrast %in% c("T1-T0", "T2-T1", "T3-T2"))
+
+consec_df$Contrast <- factor(consec_df$Contrast, levels = c("T1-T0", "T2-T1", "T3-T2"))
+
+p_consec <- ggplot(consec_df, aes(x = Contrast, y = diff, group = T_NK_cell, color = T_NK_cell)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.15, linewidth = 0.4) +
+  facet_wrap(~Signature, scales = "free_y") +
+  scale_color_manual(values = set3_colors) +
+  labs(
+    title = "Consecutive contrasts (T1-T0, T2-T1, T3-T2) with 95% CI",
+    x = "Contrast",
+    y = "Δmean (consecutive)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+p_consec
+
+
+
+
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(RColorBrewer)
+
+meta <- PBMC_CD8@meta.data %>%
+  filter(sample_name !=' RCC19_B_T3') %>%  #Responder
+  mutate(Timepoint = factor(Timepoint, levels = c("T0","T1","T2","T3")))
+
+subset_var  <- "T_NK_cell"
+subset_keep <- c("CD8_EFF", "CD8_Temra")
+
+modules_keep <- c("Pro-apoptosis18", "Senescence8") 
+
+con_tbl <- tibble(
+  contrast = c("T1-T0", "T2-T1", "T3-T2"),
+  t0 = c("T0","T1","T2"),
+  t1 = c("T1","T2","T3")
+)
+
+## =========================================================
+## 2) cell-level long format
+## =========================================================
+df_long_cell <- meta %>%
+  filter(!is.na(Timepoint)) %>%
+  filter(.data[[subset_var]] %in% subset_keep) %>%
+  select(Timepoint, subset = all_of(subset_var), all_of(modules_keep)) %>%
+  pivot_longer(cols = all_of(modules_keep),
+               names_to = "module", values_to = "score") %>%
+  filter(is.finite(score)) %>%
+  mutate(
+    subset = factor(subset, levels = subset_keep),
+    module = factor(module, levels = modules_keep)
+  )
+
+## =========================================================
+## 3) Welch 95% CI for mean difference
+##    - Δmean = mean(x1) - mean(x0)
+## =========================================================
+welch_ci <- function(x0, x1) {
+  x0 <- x0[is.finite(x0)]
+  x1 <- x1[is.finite(x1)]
+  n0 <- length(x0); n1 <- length(x1)
+  if (n0 < 2 || n1 < 2) return(c(NA_real_, NA_real_))
+  
+  m0 <- mean(x0); m1 <- mean(x1)
+  v0 <- var(x0);  v1 <- var(x1)
+  
+  se <- sqrt(v0/n0 + v1/n1)
+  
+  # Welch-Satterthwaite df
+  df <- (v0/n0 + v1/n1)^2 / ((v0^2)/((n0^2)*(n0-1)) + (v1^2)/((n1^2)*(n1-1)))
+  tcrit <- qt(0.975, df = df)
+  
+  delta <- m1 - m0
+  c(delta - tcrit*se, delta + tcrit*se)
+}
+
+stats_delta_cell <- df_long_cell %>%
+  group_by(subset, module) %>%
+  group_modify(~{
+    dat <- .x
+    
+    bind_rows(lapply(seq_len(nrow(con_tbl)), function(i){
+      t0 <- con_tbl$t0[i]
+      t1 <- con_tbl$t1[i]
+      ct <- con_tbl$contrast[i]
+      
+      v0 <- dat %>% filter(Timepoint == t0) %>% pull(score)
+      v1 <- dat %>% filter(Timepoint == t1) %>% pull(score)
+      
+      n0 <- sum(is.finite(v0)); n1 <- sum(is.finite(v1))
+      if (n0 < 5 || n1 < 5) {
+        return(tibble(
+          contrast = ct, n0 = n0, n1 = n1,
+          delta_mean = NA_real_, ci_low = NA_real_, ci_high = NA_real_, p = NA_real_
+        ))
+      }
+      
+      delta_mean <- mean(v1, na.rm = TRUE) - mean(v0, na.rm = TRUE)
+      ci <- welch_ci(v0, v1)
+      
+      pval <- suppressWarnings(
+        wilcox.test(v0, v1, paired = FALSE, exact = FALSE)$p.value
+      )
+      
+      tibble(
+        contrast = ct, n0 = n0, n1 = n1,
+        delta_mean = delta_mean, ci_low = ci[1], ci_high = ci[2], p = pval
+      )
+    }))
+  }) %>%
+  ungroup() %>%
+  mutate(contrast = factor(contrast, levels = con_tbl$contrast)) %>%
+  group_by(subset, module) %>%
+  mutate(p.adj = p.adjust(p, method = "BH")) %>%  
+  ungroup()
+
+panel_range <- stats_delta_cell %>%
+  group_by(subset, module) %>%
+  summarise(
+    ymin = min(ci_low, ci_high, delta_mean, na.rm = TRUE),
+    ymax = max(ci_low, ci_high, delta_mean, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(pad = 0.10 * (ymax - ymin + 1e-6))
+
+stats_delta_cell <- stats_delta_cell %>%
+  left_join(panel_range, by = c("subset","module")) %>%
+  mutate(
+    y_label = ymax + pad,
+    label = ifelse(
+      is.na(p.adj),
+      "NA",
+      paste0("adj p =", formatC(p.adj, format = "e", digits = 2),
+             "\n(n=", n0, ",", n1, ")")
+    )
+  )
+
+## =========================================================
+## Barplot + 95% CI + p-value
+## =========================================================
+
+time_cols <- c(
+  "T1-T0" = "#66C2A5",   # Set2 1
+  "T2-T1" = "#FC8D62",   # Set2 2
+  "T3-T2" = "#8DA0CB"    # Set2 3
+)
+
+p_delta_bar_cell <- ggplot(stats_delta_cell, aes(x = contrast, y = delta_mean, fill = contrast)) +
+  geom_hline(yintercept = 0, linetype = 1, linewidth = 0.4,colour = 'red') +
+  geom_col(width = 0.65, color = "black", alpha = 0.9, na.rm = TRUE) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high),
+                width = 0.15, linewidth = 0.5, na.rm = TRUE) +
+  geom_text(aes(y = y_label, label = label),
+            size = 3.2, vjust = 0, na.rm = TRUE) +
+  facet_grid(subset ~ module, scales = "free_y") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 11, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "none"
+  ) +
+  labs(
+    x = "Consecutive comparison",
+    y = "Δ mean (cell-level; mean(T1) − mean(T0)) with 95% Welch CI"
+  )
+
+p_delta_bar_cell+
+  scale_fill_manual(values = time_cols)
 
 
 
