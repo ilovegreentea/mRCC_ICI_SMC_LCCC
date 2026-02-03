@@ -14,10 +14,10 @@ library(Seurat)
 library(SingleCellExperiment)
 library(scDblFinder)
 library(dplyr)
-
+library(readxl)
 PBMC_IO <- readRDS("/work/users/k/y/kyutae/final4_PBMC.rds")
 PBMC_IO <- JoinLayers(PBMC_IO)
-PBMC[['percent.mt']] <- PercentageFeatureSet(PBMC, pattern = '^MT-')
+PBMC_IO[['percent.mt']] <- PercentageFeatureSet(PBMC_IO, pattern = '^MT-')
 DefaultAssay(PBMC_IO) <- "RNA"  
 sce <- scDblFinder(LayerData(PBMC_IO, assay = "RNA", layer = "counts"),  samples= PBMC_IO@meta.data$orig.ident)
 PBMC_IO$scDblFinder.score <- sce$scDblFinder.score
@@ -46,11 +46,10 @@ PBMC_IO <- RunPCA(PBMC_IO, npcs = 50)
 ElbowPlot(PBMC,ndims = 50)
 PBMC_IO <- FindNeighbors(PBMC_IO, dims = 1:15, graph.name = 'mygraph')
 PBMC_IO <- FindClusters(PBMC_IO, resolution = 1.2, graph.name = 'mygraph',random.seed = 42)
-PBMC_IO <- RunUMAP(PBMC_IO, dims = 1:15,dim = 1:15,seed.use = 42)
+PBMC_IO <- RunUMAP(PBMC_IO, dims = 1:15,seed.use = 42)
 saveRDS(PBMC_IO,"/work/users/k/y/kyutae/IO_PBMC_splited.rds")
 DefaultAssay(PBMC_IO) <- "RNA"  
 PBMC_IO <- JoinLayers(PBMC_IO)
-
 
 #Supplemental figure 1B
 DotPlot(PBMC_IO,group.by = 'seurat_clusters', features = c('CD3D','CD3E','CD8A','CD8B','CD4','CD40LG','NCAM1','GNLY','MKI67','TOP2A','CD14','CD163','LYZ','S100A12','S100A9','S100A8','FCGR3A','IGKC','IGHM','FCER1A','CD1E','CD1D','CD79A','MS4A1','BANK1','SELP','LILRA4','TCF4','TPSAB1','KIT'))+ RotatedAxis() + scale_colour_gradient2(low = "#2166ac", mid = "white", high = "#b2182b") 
@@ -132,7 +131,8 @@ sample_counts <- PBMC_IO@meta.data %>%
   group_by(sample_name) %>%
   summarise(total_cells = n(), .groups = "drop")
 
-cell_type_counts <- PBMC_IO@meta.data %>%
+cell_type_counts <- PBMC_IO@meta.data %>% 
+  filter(Timepoint != 'T3') %>% 
   group_by(sample_name, cell_type) %>%
   summarise(cell_count = n(), .groups = "drop")
 
@@ -280,14 +280,14 @@ p_time_by_response_2row
 
 PBMC_T <- subset(PBMC_IO, cell_type %in% c('CD4+ T cell','CD8+ T cell','NK cell','Proliferative_T'))
 DefaultAssay(PBMC_T) <- "integrated"
-PBMC_B@assays$integrated
-PBMC_T <- RunPCA(PBMC_T, features = VariableFeatures(object= PBMC_T),npcs = 50)
+
+  PBMC_T <- RunPCA(PBMC_T, features = VariableFeatures(object= PBMC_T),npcs = 50)
 print("RunPCA DONE")
 ElbowPlot(PBMC_T,ndims = 50)
 ElbowPlot(PBMC_T,ndims = 50)
 PBMC_T <- FindNeighbors(PBMC_T, dims= 1:10,reduction = 'pca', graph.name = 'mygraph')
 PBMC_T <- FindClusters(PBMC_T, resolution = 1, graph.name = 'mygraph',random.seed = 42)
-PBMC_T <- RunUMAP(PBMC_T,dims = 1:10,seed.use = 42,reduction = 'pca')
+PBMC_T <- RunUMAP(PBMC_T,dims = 1:10,seed.use = 42)
 DotPlot(PBMC_T, group.by = 'seurat_clusters', 
         features = c('CD3D','CD3E','CD4','CD40LG','CD8A','CD8B','NCAM1','MKI67','TOP2A','CD44','GZMB','PRF1','GZMK','IFNG','TRDV2','TRGV9','TRGV10','SLC4A10','TRAV1-2','KLRD1','FGFBP2','CX3CR1','KLRG1','HBB','FOXP3','CTLA4','SELL','IL7R','GPR183','CD69','SLAMF6','PDCD1','TCF7','TOX','HAVCR2')) + 
   ggtitle("PBMC T/NK cell Markers") + 
@@ -491,7 +491,7 @@ dittoSeq::dittoBarPlot(
   ) 
 
 
-C15 <- subset(PBMC_T, T_NK_cell == 'Proliferative_T')
+C15 <- subset(PBMC_T, T_NK_cell == 'Proliferative')
 DefaultAssay(C15) <- 'integrated'
 C15 <- RunUMAP(C15, dims = 1:10)
 C15 <- FindNeighbors(C15, dims = 1:10)
@@ -524,8 +524,8 @@ C15_T0 <- subset(PBMC_T,T_NK_cell == 'Proliferative' & Timepoint == 'T0')
 C15_T1 <- subset(PBMC_T,T_NK_cell == 'Proliferative' & Timepoint == 'T1')
 C15_T2 <- subset(PBMC_T,T_NK_cell == 'Proliferative' & Timepoint == 'T2')
 
-C15_DE <- FindMarkers(C15_T1,ident.1 = 'Responder',ident.2 = 'Non_Responder',group.by = 'Response')
-C15_DE_2 <- FindMarkers(C15_T2,ident.1 = 'Responder',ident.2 = 'Non_Responder',group.by = 'Response')
+C15_DE <- FindMarkers(C15_T0,ident.1 = 'Responder',ident.2 = 'Non_Responder',group.by = 'Response')
+C15_DE_2 <- FindMarkers(C15_T1,ident.1 = 'Responder',ident.2 = 'Non_Responder',group.by = 'Response')
 C15_DE_3 <- FindMarkers(C15_T2,ident.1 = 'Responder',ident.2 = 'Non_Responder',group.by = 'Response')
 
 C15_DE <- filter(C15_DE,pct.1 > 0.1 & pct.2 > 0.1)
@@ -553,7 +553,7 @@ T_cell_sig <- read_excel("T cell.xlsx")
 #T cell atlas CD8 functional signature
 #Chu, Y., Dai, E., Li, Y., Han, G., Pei, G., Ingram, D. R., ... & Wang, L. (2023). Pan-cancer T cell atlas links a cellular stress response state to immunotherapy resistance. Nature medicine, 29(6), 1550-1562.
 PBMC_T <- AddModuleScore(PBMC_T,features = as.list(T_cell_sig),name = names(T_cell_sig))
-
+meta0 <- PBMC_T@meta.data
 df <- meta0 %>%
   mutate(
     TimePoint     = sub("_.*", "", T_R),
@@ -687,14 +687,7 @@ draw(ht)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-PBMC_CD8 <- subset(PBMC_T, Merged %in% c("CD8_EFF","CD8_pEx","CD8_Temra","CD8_MAIT","CD8_Naive"))
-
-PBMC_CD8 <-
-  AddModuleScore(
-    object = PBMC_CD8,
-    features = hallmark_list,
-    name = names(hallmark_list),
-    assay = 'RNA') 
+PBMC_CD8 <- subset(PBMC_T, T_NK_cell %in% c("CD8_EFF","CD8_pEx","CD8_Temra","CD8_MAIT","CD8_Naive"))
 
 sig_cols <- c(
   "IFN Response14",
