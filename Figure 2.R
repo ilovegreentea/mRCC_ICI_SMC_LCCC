@@ -277,17 +277,6 @@ p_time_by_response_2row <- (p_non / p_resp) +
 
 p_time_by_response_2row
 
-
-PBMC_T <- subset(PBMC_IO, cell_type %in% c('CD4+ T cell','CD8+ T cell','NK cell','Proliferative_T'))
-DefaultAssay(PBMC_T) <- "integrated"
-
-  PBMC_T <- RunPCA(PBMC_T, features = VariableFeatures(object= PBMC_T),npcs = 50)
-print("RunPCA DONE")
-ElbowPlot(PBMC_T,ndims = 50)
-ElbowPlot(PBMC_T,ndims = 50)
-PBMC_T <- FindNeighbors(PBMC_T, dims= 1:10,reduction = 'pca', graph.name = 'mygraph')
-PBMC_T <- FindClusters(PBMC_T, resolution = 1, graph.name = 'mygraph',random.seed = 42)
-PBMC_T <- RunUMAP(PBMC_T,dims = 1:10,seed.use = 42)
 DotPlot(PBMC_T, group.by = 'seurat_clusters', 
         features = c('CD3D','CD3E','CD4','CD40LG','CD8A','CD8B','NCAM1','MKI67','TOP2A','CD44','GZMB','PRF1','GZMK','IFNG','TRDV2','TRGV9','TRGV10','SLC4A10','TRAV1-2','KLRD1','FGFBP2','CX3CR1','KLRG1','HBB','FOXP3','CTLA4','SELL','IL7R','GPR183','CD69','SLAMF6','PDCD1','TCF7','TOX','HAVCR2')) + 
   ggtitle("PBMC T/NK cell Markers") + 
@@ -491,12 +480,6 @@ dittoSeq::dittoBarPlot(
   ) 
 
 
-C15 <- subset(PBMC_T, T_NK_cell == 'Proliferative')
-DefaultAssay(C15) <- 'integrated'
-C15 <- RunUMAP(C15, dims = 1:10)
-C15 <- FindNeighbors(C15, dims = 1:10)
-C15 <- FindClusters(C15, resolution = 1)
-DefaultAssay(C15) <- 'RNA'
 DotPlot(C15,group.by = 'seurat_clusters',c('NCAM1','CD3D','CD8A','CD4'),scale = T)
 
 C15@meta.data <- C15@meta.data %>%
