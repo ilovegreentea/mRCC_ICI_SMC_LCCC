@@ -1,3 +1,6 @@
+# Cell type specific signature from : ref :: Bi, K., Kashima, S., Camp, S. Y., Meli, K., Saad, E., Titchen, B. M., ... & Van Allen, E. M. (2025). Myeloid cells mediate interferon-driven resistance to immunotherapy in advanced renal cell carcinoma. Immunity, 58(11), 2814-2829.
+# code ref https://github.com/kevinbi2599/ccRCC_IFN_Resistance_Immunity2025
+
 suppressPackageStartupMessages({
   library(Seurat)
   library(dplyr)
