@@ -130,7 +130,7 @@ Idents(seu) <- seu@meta.data[[celltype_col]]
 all_types <- setdiff(levels(factor(seu@meta.data[[celltype_col]])), exclude_celltypes)
 comp_types <- setdiff(all_types, target_celltype)
 
-latent_vars <- c(patient_col, intersect(c("Timepoint"), colnames(seu@meta.data)))
+latent_vars <- c(patient_col,covars, intersect(c("Timepoint"), colnames(seu@meta.data)))
 latent_vars <- unique(latent_vars)
 
 run_one_vs_each <- function(comp) {
