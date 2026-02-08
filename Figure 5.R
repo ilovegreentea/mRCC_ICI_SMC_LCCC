@@ -340,3 +340,206 @@ p_prop_T2 <- plot_prop_by_timepoint(df_prop, "T2", show_p = TRUE)
 p_prop <- p_prop_T0 / p_prop_T2
 p_prop
 
+
+
+library(CellChat)
+library(patchwork)
+library(Seurat)
+library(dplyr)
+
+RCC_IO <- subset(RCC_IO, cell_type %in% c("T/NK cell", "Myeloid"))
+RCC_IO@meta.data$subtypes <- ifelse(RCC_IO@meta.data$subtypes == "Progenitor exhausted T cell(pEx)", "pEx", RCC_IO@meta.data$subtypes)
+RCC_IO@meta.data$subtypes <- ifelse(RCC_IO@meta.data$subtypes == "Intermediate exhausted T cell(iEx)", "iEx", RCC_IO@meta.data$subtypes)
+RCC_IO@meta.data$subtypes <- ifelse(RCC_IO@meta.data$subtypes == "Exhausted T cell(tEx)", "tEx", RCC_IO@meta.data$subtypes)
+Idents(RCC_IO) <- RCC_IO@meta.data$subtypes
+
+# # ---------------------------------------
+# 🔹 Filter to the selected timepoint and split into Responder / Non_Responder
+# ---------------------------------------
+RCC_IO_T0 <- subset(RCC_IO, Timepoint == "T0" & cell_type %in% c("Myeloid", "T/NK cell"))
+T0_Responder <- subset(RCC_IO_T0, Response == "Responder" & subtypes != "NA" & subtypes != "pDC" & subtypes != "mregDC_LAMP3(low)")
+T0_Non_Responder <- subset(RCC_IO_T0, Response == "Non_Responder" & subtypes != "NA" & subtypes != "pDC" & subtypes != "mregDC_LAMP3(low)")
+DefaultAssay(T0_Responder) <- "RNA"
+DefaultAssay(T0_Non_Responder) <- "RNA"
+
+# Apply DietSeurat to reduce object size
+T0_Responder <- DietSeurat(T0_Responder, assays = "RNA", counts = TRUE, data = TRUE)
+T0_Non_Responder <- DietSeurat(T0_Non_Responder, assays = "RNA", counts = TRUE, data = TRUE)
+
+T0_Responder <- UpdateSeuratObject(T0_Responder)
+T0_Non_Responder <- UpdateSeuratObject(T0_Non_Responder)
+
+# Ensure meta.data rownames match cell barcodes
+rownames(T0_Responder@meta.data) <- colnames(T0_Responder)
+rownames(T0_Non_Responder@meta.data) <- colnames(T0_Non_Responder)
+options(future.globals.maxSize = 8000 * 1024^2)
+
+# ---------------------------------------
+# 🔹 Create CellChat objects
+# ---------------------------------------
+cellchat_responder <- createCellChat(object = T0_Responder, group.by = "subtypes")
+cellchat_responder <- addMeta(cellchat_responder, meta = T0_Responder@meta.data)
+cellchat_responder <- setIdent(cellchat_responder, ident.use = "subtypes")
+cellchat_responder@DB <- CellChatDB.human
+cellchat_responder <- subsetData(cellchat_responder)
+
+cellchat_nonresponder <- createCellChat(object = T0_Non_Responder, group.by = "subtypes")
+cellchat_nonresponder <- addMeta(cellchat_nonresponder, meta = T0_Non_Responder@meta.data)
+cellchat_nonresponder <- setIdent(cellchat_nonresponder, ident.use = "subtypes")
+cellchat_nonresponder@DB <- CellChatDB.human
+cellchat_nonresponder <- subsetData(cellchat_nonresponder)
+
+# ---------------------------------------
+# 🔹 Run CellChat analysis (per condition)
+# ---------------------------------------
+# Responder
+cellchat_responder <- identifyOverExpressedGenes(cellchat_responder)
+cellchat_responder <- identifyOverExpressedInteractions(cellchat_responder)
+cellchat_responder <- computeCommunProb(cellchat_responder)
+cellchat_responder <- filterCommunication(cellchat_responder, min.cells = 10)
+cellchat_responder <- computeCommunProbPathway(cellchat_responder)
+cellchat_responder <- aggregateNet(cellchat_responder)
+cellchat_responder <- netAnalysis_computeCentrality(cellchat_responder)
+
+# Non_Responder
+cellchat_nonresponder <- identifyOverExpressedGenes(cellchat_nonresponder)
+cellchat_nonresponder <- identifyOverExpressedInteractions(cellchat_nonresponder)
+cellchat_nonresponder <- computeCommunProb(cellchat_nonresponder)
+cellchat_nonresponder <- filterCommunication(cellchat_nonresponder, min.cells = 10)
+cellchat_nonresponder <- computeCommunProbPathway(cellchat_nonresponder)
+cellchat_nonresponder <- aggregateNet(cellchat_nonresponder)
+cellchat_nonresponder <- netAnalysis_computeCentrality(cellchat_nonresponder)
+
+# ---------------------------------------
+# 🔹 Merge and compare
+# ---------------------------------------
+object.list <- list(Responder = cellchat_responder, Non_Responder = cellchat_nonresponder)
+cellchat_compare <- mergeCellChat(object.list, add.names = names(object.list))
+i <- 1
+
+pathway.union <- union(object.list[[1]]@netP$pathways,
+                       object.list[[2]]@netP$pathways)
+
+pathway.union <- union(object.list[[i]]@netP$pathways, object.list[[i + 1]]@netP$pathways)
+ht1 <- netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[i])
+ht2 <- netAnalysis_signalingRole_heatmap(object.list[[i + 1]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[i + 1])
+library(ComplexHeatmap)
+draw(ht1 + ht2, ht_gap = unit(2, "cm"))
+
+gg1 <- compareInteractions(cellchat_compare, show.legend = TRUE, group = c(1, 2))
+gg2 <- netVisual_diffInteraction(cellchat_compare, weight.scale = TRUE)
+gg3 <- rankNet(cellchat_compare, mode = "comparison")
+gg3
+
+rankNet(cellchat_compare, mode = "comparison", stacked = TRUE, measure = "weight")
+num.link <- sapply(object.list, function(x) {
+  rowSums(x@net$count) + colSums(x@net$count) - diag(x@net$count)
+})
+
+weight.MinMax <- c(min(num.link), max(num.link))
+vals <- unlist(num.link)
+library(reticulate)
+
+# py_install(packages = "umap-learn")
+
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax)
+}
+patchwork::wrap_plots(plots = gg) + xlim(0, 70)
+p1 <- gg[[1]] + xlim(0, 50) + ylim(0, 60)
+p2 <- gg[[2]] + xlim(0, 50) + ylim(0, 60)
+p1 + p2
+
+table(cellchat_compare@meta$datasets)     # Check dataset labels (e.g., 1, 2)
+table(cellchat_compare@meta$datasets, cellchat_compare@meta$subtypes)
+
+cellchat_compare <- computeNetSimilarityPairwise(cellchat_compare, type = "functional")
+cellchat_compare <- netEmbedding(cellchat_compare, type = "functional")
+cellchat_compare <- netClustering(cellchat_compare, type = "functional")
+netVisual_embeddingPairwise(cellchat_compare, type = "functional", label.size = 3.5)
+
+rankSimilarity(cellchat_compare, type = "functional")
+
+lapply(cellchat_compare@netP, function(x) "TGFb" %in% x$pathways)
+
+dev.off()
+pathway.show <- "PLAU"
+par(mfrow = c(1, 2))
+netVisual_aggregate(cellchat_nonresponder, signaling = pathway.show, show.legend = TRUE, weight.scale = TRUE)
+netVisual_aggregate(cellchat_responder, signaling = pathway.show, show.legend = TRUE, weight.scale = TRUE)
+
+dev.off()
+par(mfrow = c(1, 2))
+netVisual_aggregate(cellchat_nonresponder, signaling = "ADGRE", show.legend = TRUE, title.space = 1, pt.title = 10)
+netVisual_aggregate(cellchat_responder, signaling = "ADGRE", show.legend = TRUE, title.space = 1, pt.title = 10)
+
+# save.image("cellchatT0.rda")
+pathway.show <- "ANNEXIN"
+netVisual_bubble(cellchat_compare, sources.use = source_names, targets.use = source_names, signaling = pathway.show)
+gg4 <- netAnalysis_contribution(cellchat_compare, signaling = pathway.show)
+gg5 <- netVisual_chord_gene(cellchat_compare, sources.use = source_names, targets.use = source_names)
+gg4 + gg5
+
+dev.off()
+netVisual_heatmap(cellchat_compare, measure = "weight", signaling = "ANNEXIN") +
+  netVisual_heatmap(cellchat_compare, measure = "count", signaling = "ANNEXIN")
+
+pos.dataset <- "Responder"
+features.name <- paste0(pos.dataset, ".merged")
+
+cellchat_compare <- identifyOverExpressedGenes(
+  cellchat_compare,
+  group.dataset = "datasets",
+  pos.dataset = "Responder",
+  features.name = features.name,
+  only.pos = FALSE,
+  thresh.pc = 0.1,
+  thresh.fc = 0.1,
+  thresh.p = 0.05,
+  group.DE.combined = FALSE
+)
+
+net <- netMappingDEG(cellchat_compare, features.name = features.name, variable.all = FALSE)
+
+net.up <- subsetCommunication(cellchat_compare, net = net, datasets = "Responder", ligand.logFC = 0.25, receptor.logFC = 0.25)
+net.down <- subsetCommunication(cellchat_compare, net = net, datasets = "Non_Responder", ligand.logFC = -0.25, receptor.logFC = -0.25)
+
+gene.up <- extractGeneSubsetFromPair(net.up, cellchat_compare)
+gene.down <- extractGeneSubsetFromPair(net.down, cellchat_compare)
+
+pairLR.use.up <- net.up[, "interaction_name", drop = FALSE]
+pairLR.use.down <- net.down[, "interaction_name", drop = FALSE]
+
+source_names <- cellchat_compare@meta$subtypes %>% table() %>% names()
+gg1 <- netVisual_bubble(
+  cellchat_compare,
+  pairLR.use = pairLR.use.up,
+  sources.use = source_names,
+  targets.use = source_names[c(15, 19, 10)],
+  comparison = c(1, 2),
+  angle.x = 90,
+  remove.isolate = TRUE,
+  title.name = "Up-regulated signaling in Responder"
+)
+gg1
+
+save.image("cellchat_t2_T_Myed.rda")
+library(stringr)
+library(ggtext)
+
+# windows()
+gg2 <- netVisual_bubble(
+  cellchat_compare,
+  pairLR.use = pairLR.use.down,
+  sources.use = source_names[c(-15, -10, 3, 2, 7, 8, 9)],
+  targets.use = source_names[c(10, 15, 19)],
+  comparison = c(1, 2),
+  angle.x = 90,
+  remove.isolate = TRUE,
+  title.name = "Down-regulated signaling in Responder"
+)
+
+gg1 + gg2
+
+
