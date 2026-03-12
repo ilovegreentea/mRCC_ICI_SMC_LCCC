@@ -13,7 +13,6 @@ library(dplyr)
 library(org.Hs.eg.db)
 library(clusterProfiler)
 T0_DE <- filter(T0_R_NR,pct.1 > 0.1 & pct.2 > 0.1)
-
 T2_DE <- filter(T2_R_NR,pct.1 > 0.1 & pct.2 > 0.1)
 library(dplyr)
 library(purrr)
@@ -240,7 +239,6 @@ go_top <- enrich_go |>
   slice_head(n = top_n) |>
   ungroup()
 
-# ---- 패널별 y축 정렬 ----
 go_top <- go_top |>
   mutate(
     panel = interaction(timepoint, direction, drop = TRUE),
@@ -326,17 +324,8 @@ res_overlap <- lapply(names(regulons_asGeneSet_CD8_Regulon), function(tf){
 })
 
 res_overlap <- do.call(rbind, res_overlap)
-
-# DEG가 1개라도 걸리는 TF만 보고 싶으면
 res_overlap2 <- subset(res_overlap, n_overlap > 0)
-
-# overlap 많은 순으로
 res_overlap2 <- res_overlap2[order(res_overlap2$n_overlap, decreasing = TRUE), ]
-
-res_overlap2 %>% head()
- 
-
-
 
 # inputs:
 # regulons_asGeneSet_CD8_Regulon : named list (TF -> target genes)
@@ -357,12 +346,10 @@ jac_vec <- vapply(tf_names, function(tf){
   jaccard(deg, regulons_asGeneSet_CD8_Regulon[[tf]])
 }, numeric(1))
 
-# TF x 1 matrix (heatmap용)
 jac_mat <- matrix(jac_vec, ncol = 1)
 rownames(jac_mat) <- tf_names
 colnames(jac_mat) <- "T0_DE"
 
-# 보기 좋게: 상위 TF만 (예: top 50)
 top_n <- 50
 keep <- order(jac_vec, decreasing = TRUE)[seq_len(min(top_n, length(jac_vec)))]
 jac_mat_top <- jac_mat[keep, , drop = FALSE]
@@ -383,11 +370,11 @@ library(circlize)
 
 ht <- Heatmap(
   jac_mat_top,
-  name = "Jaccard index",                         # <- colorbar 라벨
-  column_title = "Jaccard index (DEG vs regulon)", # <- 타이틀
+  name = "Jaccard index",                      
+  column_title = "Jaccard index (DEG vs regulon)", 
   row_title = "TF regulon",
   cluster_rows = TRUE,
-  cluster_columns = FALSE,                         # 여러 컬럼이면 TRUE로
+  cluster_columns = FALSE,                       
   heatmap_legend_param = list(title = "Jaccard index")
 )
 
