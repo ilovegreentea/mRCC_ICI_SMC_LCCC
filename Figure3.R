@@ -308,6 +308,91 @@ ggplot(go_plot_df) +
   )
 
 
+# regulons_asGeneSet_CD8_Regulon : named list (TF -> target genes)
+# T0_DE : character vector (DEG genes)
+
+deg <- unique(T0_DE)
+
+res_overlap <- lapply(names(regulons_asGeneSet_CD8_Regulon), function(tf){
+  targets <- unique(regulons_asGeneSet_CD8_Regulon[[tf]])
+  hit <- intersect(deg, targets)
+  
+  data.frame(
+    TF = tf,
+    n_overlap = length(hit),
+    overlap_genes = paste(hit, collapse = ", "),
+    stringsAsFactors = FALSE
+  )
+})
+
+res_overlap <- do.call(rbind, res_overlap)
+
+# DEG가 1개라도 걸리는 TF만 보고 싶으면
+res_overlap2 <- subset(res_overlap, n_overlap > 0)
+
+# overlap 많은 순으로
+res_overlap2 <- res_overlap2[order(res_overlap2$n_overlap, decreasing = TRUE), ]
+
+res_overlap2 %>% head()
+ 
+
+
+
+# inputs:
+# regulons_asGeneSet_CD8_Regulon : named list (TF -> target genes)
+# T0_DE : character vector
+
+jaccard <- function(a, b) {
+  a <- unique(a); b <- unique(b)
+  inter <- length(intersect(a, b))
+  uni   <- length(union(a, b))
+  if (uni == 0) return(NA_real_)
+  inter / uni
+}
+
+deg <- unique(T0_DE)
+
+tf_names <- names(regulons_asGeneSet_CD8_Regulon)
+jac_vec <- vapply(tf_names, function(tf){
+  jaccard(deg, regulons_asGeneSet_CD8_Regulon[[tf]])
+}, numeric(1))
+
+# TF x 1 matrix (heatmap용)
+jac_mat <- matrix(jac_vec, ncol = 1)
+rownames(jac_mat) <- tf_names
+colnames(jac_mat) <- "T0_DE"
+
+# 보기 좋게: 상위 TF만 (예: top 50)
+top_n <- 50
+keep <- order(jac_vec, decreasing = TRUE)[seq_len(min(top_n, length(jac_vec)))]
+jac_mat_top <- jac_mat[keep, , drop = FALSE]
+
+# heatmap (pheatmap)
+if (!requireNamespace("pheatmap", quietly = TRUE)) install.packages("pheatmap")
+pheatmap::pheatmap(jac_mat_top, cluster_rows = TRUE, cluster_cols = FALSE)
+
+
+# install.packages("ComplexHeatmap")
+# install.packages("circlize")
+
+library(ComplexHeatmap)
+library(circlize)
+
+# jac_mat_top: TF x 1 (또는 TF x timepoints) matrix
+# rownames(jac_mat_top) = TF, colnames(jac_mat_top) = "T0_DE" 등
+
+ht <- Heatmap(
+  jac_mat_top,
+  name = "Jaccard index",                         # <- colorbar 라벨
+  column_title = "Jaccard index (DEG vs regulon)", # <- 타이틀
+  row_title = "TF regulon",
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,                         # 여러 컬럼이면 TRUE로
+  heatmap_legend_param = list(title = "Jaccard index")
+)
+
+draw(ht)
+
 
 
 
