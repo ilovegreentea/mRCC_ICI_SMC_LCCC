@@ -2537,3 +2537,51 @@ dittoSeq::dittoBarPlot(
   color.panel = tnk_palette
 )
 
+
+
+
+
+library(dplyr)
+library(ggplot2)
+library(scales)   
+
+overlap_obj <- clonalOverlap(
+  T_PBMC_T,
+  cloneCall = "strict",
+  method = "jaccard",
+  group.by = "T_NK_cell"
+)
+
+df_overlap <- overlap_obj@data
+
+# Tissue(Var1 = T_) × PBMC(Var2 = B_) 
+df_tb <- df_overlap %>%
+  filter(
+    grepl("^Tissue_", Var2),
+    grepl("^PBMC_", Var1)
+  )
+
+p_overlap_pbmc_tissue <- ggplot(df_tb,
+                                aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "grey70") +
+  scale_fill_gradient(
+    low  = "white",
+    high = "red",
+    na.value = "white",
+    limits = c(min(df_tb$value, na.rm = TRUE),
+               max(df_tb$value, na.rm = TRUE))
+  ) +
+  theme_bw() +
+  RotatedAxis() +
+  theme(
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8)
+  ) +
+  labs(
+    title = "Clonal overlap (Jaccard): Tissue (Y) vs PBMC (X)",
+    x     = "PBMC T/NK subsets",
+    y     = "Tissue T/NK subsets",
+    fill  = "Overlap jaccard Score"
+  )
+
+p_overlap_pbmc_tissue
