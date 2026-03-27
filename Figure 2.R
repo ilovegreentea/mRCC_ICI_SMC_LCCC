@@ -469,8 +469,6 @@ dittoSeq::dittoBarPlot(
   ylab = "Proportion",  
   color.panel = set3_colors,
   theme = theme_minimal(base_size = 14) )+ 
-  # scale_fill_manual(values = set3_colors,
-  #                   breaks = levels(T_cell_T1@meta.data$TCF7_PDCD1))+
   theme(
     axis.text = element_text(size = 12, family = "serif"),
     axis.title = element_text(size = 11, face = "bold", family = "serif"),
