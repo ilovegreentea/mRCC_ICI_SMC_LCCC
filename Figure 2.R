@@ -461,7 +461,7 @@ p_time_by_response_2row <- (p_non / p_resp) +
 p_time_by_response_2row
 
 PBMC_T@meta.data$T_R <- paste0(PBMC_T@meta.data$Timepoint,'_',PBMC_T@meta.data$Response)
-#Figure2D
+#Figure2C
 dittoSeq::dittoBarPlot(
   object = PBMC_T,
   var = "T_NK_cell",
@@ -478,29 +478,8 @@ dittoSeq::dittoBarPlot(
   ) 
 
 
-DotPlot(C15,group.by = 'seurat_clusters',c('NCAM1','CD3D','CD8A','CD4'),scale = T)
 
-C15@meta.data <- C15@meta.data %>%
-  mutate(Pro_types = case_when(
-    seurat_clusters == "0" ~ "CD8", 
-    seurat_clusters == "1" ~ "NK", 
-    seurat_clusters == "2" ~ "CD8", 
-    seurat_clusters == "3" ~ "NK", 
-    seurat_clusters == "4" ~ "Treg", 
-    seurat_clusters == "5" ~ "Treg",
-    seurat_clusters == "6" ~ "NK",
-    seurat_clusters == "7" ~ "NK",
-    seurat_clusters == "8" ~ "CD8",
-    seurat_clusters == "9" ~ "CD4",
-    seurat_clusters == "10" ~ "CD8",
-    seurat_clusters == '11' ~ 'CD4CD8',
-    seurat_clusters == '12' ~ 'CD4CD8',
-    TRUE ~ NA_character_
-  ))
-
-  #Figure 2E
-dittoSeq::dittoBarPlot(C15,var = 'Pro_types',group.by = 'T_R')
-
+#Figure 2D
 C15_T0 <- subset(PBMC_T,T_NK_cell == 'Proliferative' & Timepoint == 'T0')
 C15_T1 <- subset(PBMC_T,T_NK_cell == 'Proliferative' & Timepoint == 'T1')
 C15_T2 <- subset(PBMC_T,T_NK_cell == 'Proliferative' & Timepoint == 'T2')
@@ -558,7 +537,6 @@ calc_meandiff_one <- function(dat, feature, tp, subtype) {
     select(ResponseGroup, val) %>%
     filter(!is.na(val), !is.na(ResponseGroup))
   
-  # 데이터 부족할 때
   if (nrow(sub_df) == 0 || n_distinct(sub_df$ResponseGroup) < 2) {
     return(tibble(
       feature   = feature,
@@ -834,16 +812,13 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 
-# 1) 시그니처들
 sig_cols <- c(
   "Pro-apoptosis18",
   "Senescence8"
 )
 PBMC_CD8@meta.data %>% colnames()
-# 2) cell type 지정
 cell_types <- c("CD8_EFF", "CD8_MAIT", "CD8_Temra", "CD8_Naive", "CD8_pEx")
 
-# 3) 셀 레벨 데이터 (Response 제거, T0~T3 모두 사용)
 sig_df <- PBMC_CD8@meta.data %>%
   filter(T_NK_cell %in% cell_types) %>%
   mutate(TimePoint = sub("_.*", "", T_R)) %>%      # 기존 로직 유지
@@ -999,8 +974,6 @@ p_consec <- ggplot(consec_df, aes(x = Contrast, y = diff, group = T_NK_cell, col
   )
 
 p_consec
-
-
 
 
 
