@@ -305,8 +305,151 @@ ggplot(go_plot_df) +
     panel.grid.minor = element_blank()
   )
 
+#SCENIC ANALYSIS
+.libPaths("~/R/rhel9/4.4.0")
+# .libPaths("/nas/longleaf/home/kyutae/R/x86_64-pc-linux-gnu-library/4.4")
 
-# regulons_asGeneSet_CD8_Regulon : named list (TF -> target genes)
+library(Seurat)
+library(tidyverse)
+library(magrittr)
+library(SCENIC)
+library(SingleCellExperiment)
+library(SCopeLoomR)
+library(AUCell)
+library(GENIE3)
+library(ComplexHeatmap)
+library(circlize)
+library(reshape2)
+library(plotly)
+library(hdf5r)
+library(SCopeLoomR)
+
+setwd("/work/users/k/y/kyutae/")
+T_cell <- readRDS("/work/users/k/y/kyutae/CAF_C5.rds")
+CD8<-subset(T_cell, T_NK_cell %in% c('CD8_STR','CD8_TEMRA','pEx','iEx','tEx'))
+sce <- SingleCellExperiment(
+  assays = list(counts = as.matrix(GetAssayData(CD8, layer="counts"))),
+  colData = CD8@meta.data
+)
+exprMat <- counts(sce)
+cellInfo <- colData(sce)
+cellInfo$CellType <- cellInfo$T_NK_cell 
+# 
+loom_path <- "/work/users/k/y/kyutae/data/CD8.loom"
+loom <- build_loom(loom_path, dgem=exprMat)
+loom <- add_cell_annotation(loom, cellInfo)
+close_loom(loom)
+
+loom <- open_loom(loom_path)
+exprMat <- get_dgem(loom)
+cellInfo <- get_cell_annotation(loom)
+close_loom(loom)
+
+cellInfo <- data.frame(cellInfo)
+dir.create("int", showWarnings = FALSE)
+saveRDS(cellInfo, file="int/cellInfo.Rds")
+org <- "hgnc" # or hgnc, or dmel
+dbDir <- "cisTarget_databases" # RcisTarget databases location
+myDatasetTitle <- "SCENIC on CD8+T cell" 
+data(defaultDbNames)
+dbs <- defaultDbNames[[org]]
+#load in the motifannotation this will load it into your environment but as the name in which is given to the list argument
+data(list="motifAnnotations_hgnc_v9", package="RcisTarget")
+cellInfo<- readRDS( file="int/cellInfo.Rds")
+#rename the motif annnotion by attributing it to the variable that is in the error
+motifAnnotations_hgnc <- motifAnnotations_hgnc_v9
+
+scenicOptions <- initializeScenic(
+  org = "hgnc",
+  dbDir = "/work/users/k/y/kyutae/IO/cisTarget_databases/",
+  nCores = 20,
+  dbs = c('hg38__refseq-r80__10kb_up_and_down_tss.mc9nr.feather',
+          'hg38__refseq-r80__500bp_up_and_100bp_down_tss.mc9nr.feather')
+)
+scenicOptions@inputDatasetInfo$cellInfo <- "int/cellInfo.Rds"
+scenicOptions@inputDatasetInfo$colVars <- "int/colVars.Rds"
+saveRDS(scenicOptions, file="int/scenicOptions.Rds")
+
+# # Gene filtering
+exprMat <- as.matrix(exprMat)
+genesKept <- geneFiltering(exprMat, scenicOptions=scenicOptions,
+                           minCountsPerGene=3 * 0.01 * ncol(exprMat),
+                           minSamples=ncol(exprMat) * 0.01)
+exprMat_filtered <- exprMat[genesKept, ]
+runCorrelation(exprMat_filtered, scenicOptions)
+exprMat_filtered <- log2(exprMat_filtered + 1)
+
+# # Genie3 
+runGenie3(exprMat_filtered, scenicOptions)
+
+# # SCENIC 
+scenicOptions <- runSCENIC_1_coexNetwork2modules(scenicOptions)
+scenicOptions <- runSCENIC_2_createRegulons(scenicOptions)
+saveRDS(scenicOptions, file="int/scenicOptions.Rds")
+
+scenicOptions@settings$nCores <- 20
+
+scenicOptions <- runSCENIC_3_scoreCells(scenicOptions, exprMat_filtered,
+                                        skipHeatmap = TRUE, skipTsne = TRUE)
+
+options(stringsAsFactors = FALSE, mc.cores = 1)  
+library(SCENIC)
+library(AUCell)
+library(spaMM )
+saveRDS(scenicOptions, file="int/scenicOptions.Rds")
+scenicOptions <- readRDS('int/scenicOptions.Rds')
+scenicOptions <- runSCENIC_4_aucell_binarize(scenicOptions,skipHeatmaps = T,skipBoxplot = T,skipTsne = T)
+
+setwd("/work/users/k/y/kyutae")
+
+# t-SNE running
+nPcs <- c(5, 15, 50)
+fileNames <- tsneAUC(scenicOptions, aucType="AUC", nPcs=nPcs, perpl=c(5, 15, 50), onlyHighConf=TRUE, filePrefix="int/tSNE_oHC")
+
+# UMAP Embedding
+dr_coords <- Embeddings(CD8, reduction="umap")
+
+# Regulon Activity analysis
+regulonAUC <- loadInt(scenicOptions, "aucell_regulonAUC")
+regulonAUC <- regulonAUC[onlyNonDuplicatedExtended(rownames(regulonAUC)),]
+
+# Regulon activity by cell type
+# cellInfo$CellType <- paste0(cellInfo$Response,cellInfo$CellType)
+regulonActivity_byCellType <- sapply(split(rownames(cellInfo), cellInfo$CellType),
+                                     function(cells) rowMeans(getAUC(regulonAUC)[, cells]))
+
+regulonActivity_byCellType_Scaled <- t(scale(t(regulonActivity_byCellType), center = TRUE, scale = TRUE))
+saveRDS(regulonActivity_byCellType_Scaled, 'regulonActivity_byCellType_Scaled.rds')
+
+minPerc <- 0.7
+binaryRegulonActivity <- loadInt(scenicOptions, "aucell_binary_nonDupl")
+cellInfo_binarizedCells <- cellInfo[rownames(cellInfo) %in% colnames(binaryRegulonActivity), , drop=FALSE]
+cellInfo_binarizedCells$CellType <- paste0(cellInfo_binarizedCells$group,'_',cellInfo_binarizedCells$CellType)
+
+regulonActivity_byCellType_Binarized <- sapply(split(rownames(cellInfo_binarizedCells), cellInfo_binarizedCells$CellType), 
+                                               function(cells) rowMeans(binaryRegulonActivity[, cells, drop=FALSE]))
+
+binaryActPerc_subset <- regulonActivity_byCellType_Binarized[rowSums(regulonActivity_byCellType_Binarized > minPerc) > 0.9, ]
+
+# saveRDS(binaryActPerc_subset, 'binaryActPerc_subset.rds')
+# binaryActPerc_subset <- readRDS(	'binaryActPerc_subset.rds')
+
+col_fun <- colorRamp2(c(0, 0.5, 1), c("white", "pink", "red"))
+ht <- Heatmap(
+  binaryActPerc_subset,
+  name = "Regulon Activity",
+  col = col_fun,
+  rect_gp = gpar(col = "grey"),
+  row_names_gp = gpar(fontsize = 10),
+  column_names_gp = gpar(fontsize = 10),
+  cluster_rows = TRUE,
+  cluster_columns = TRUE
+)
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "bottom")
+
+
+
+# regulons_asGeneSet_CD8_Regulon : named list (TF -> target genes) 	"2.6_regulons_asGeneSet.Rds" 
 # T0_DE : character vector (DEG genes)
 
 deg <- unique(T0_DE)
