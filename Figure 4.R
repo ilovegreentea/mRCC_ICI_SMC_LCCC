@@ -1303,6 +1303,45 @@ table_df %>%
   summarise(across(everything(), ~sum(as.character(.) %in% c("NA","<NA>","None")))) %>%
   print()
 
+
+
+    #T_PBMC_Tissue = merged seurat_object PBMC + Tissue
+library(scRepertoire)
+
+RCC5 <- clonalCompare(T_PBMC_Tissue, 
+                      top.clones = 10, 
+                      samples = c('RCC5_B_T0',"RCC5_T0", "RCC5_T2",'RCC5_B_T2'), 
+                      cloneCall="aa", 
+                      graph = "alluvial",group.by = 'sample_name',order.by =  c('RCC5_B_T0',"RCC5_T0", "RCC5_T2",'RCC5_B_T2')) + ggtitle("RCC5") + NoLegend()
+
+
+RCC10 <- clonalCompare(T_PBMC_Tissue,
+                      top.clones = 10,
+                      samples = c('RCC10_B_T0',"RCC10_T0", "RCC10_T2",'RCC10_B_T2'),
+                      cloneCall="aa",
+                      graph = "alluvial",group.by = 'sample_name',order.by =c('RCC10_B_T0',"RCC10_T0", "RCC10_T2",'RCC10_B_T2')) + ggtitle("RCC10")+ NoLegend()
+RCC12<- clonalCompare(T_PBMC_Tissue, 
+                      top.clones = 10, 
+                      samples = c('RCC12_B_T0',"RCC12_T0", "RCC12_T2",'RCC12_B_T2'), 
+                      cloneCall="aa", 
+                      graph = "alluvial",group.by = 'sample_name',order.by = c('RCC12_B_T0',"RCC12_T0", "RCC12_T2",'RCC12_B_T2')) + ggtitle("RCC12")+ NoLegend()
+RCC13 <- clonalCompare(T_PBMC_Tissue, 
+                      top.clones = 10, 
+                      samples = c('RCC13_B_T0',"RCC13_T0", "RCC13_T2",'RCC13_B_T2'), 
+                      cloneCall="aa", 
+                      graph = "alluvial",group.by = 'sample_name',order.by = c('RCC13_B_T0',"RCC13_T0", "RCC13_T2",'RCC13_B_T2')) + ggtitle("RCC13")+ NoLegend()
+RCC24 <- clonalCompare(T_PBMC_Tissue, 
+                      top.clones = 10, 
+                      samples = c('RCC24_B_T0',"RCC24_T0", "RCC24_T2",'RCC24_B_T2'), 
+                      cloneCall="aa", 
+                      graph = "alluvial",group.by = 'sample_name',order.by = c('RCC24_B_T0',"RCC24_T0", "RCC24_T2",'RCC24_B_T2')) + ggtitle("RCC24")+ NoLegend()
+
+
+RCC5 +((RCC10 + RCC12)/
+  (RCC13 + RCC24)
+)
+
+
 important %>%
   filter(!is.na(CTgene_mode), CTgene_mode != "") %>%
   mutate(trbv = str_extract(CTgene_mode, "TRBV.*$")) %>%
