@@ -11,7 +11,7 @@ sample_annot <- tribble(
   "D_23_00396_TS_WES", "RCC12", "T0", "Non_responder",
   "D_23_00397_TS_WES", "RCC13", "T0", "Non_responder",
   "D_23_00399_TS_WES", "RCC14", "T2", "Non_responder",
-  "D_23_00401_TS_WES", "RCC15", "T0", "Non_responder",
+  "D_23_00401_TS_WES", "RCC15", "T0", "Responder",
   "D_23_00402_TS_WES", "RCC16", "T0", "Responder",
   "D_23_00403_TS_WES", "RCC17", "T0", "Responder",
   "D_23_00404_TS_WES", "RCC18", "T0", "Responder",
